@@ -1,78 +1,56 @@
 const socket = io();
 const video = document.getElementById('remoteVideo');
-const startBtn = document.getElementById('startBtn');
 const enterVR = document.getElementById('enterVR');
 
 let pc = new RTCPeerConnection({
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
 
-pc.ontrack = event => {
-  console.log('📺 Received remote track');
-  const stream = event.streams[0];
-  video.srcObject = stream;
-
-  video.onloadedmetadata = () => {
-    console.log('🎬 Metadata loaded, playing stream');
+// 🟢 Send your mobile camera stream as early as possible
+navigator.mediaDevices.getUserMedia({ video: true })
+  .then(stream => {
+    console.log("🎥 Camera access granted");
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    video.srcObject = stream;
     video.play();
-  };
+  })
+  .catch(err => {
+    console.error("🚫 Could not access camera:", err);
+    alert("Please allow camera access to stream video.");
+  });
+
+pc.ontrack = event => {
+  console.log("📺 Receiving remote track...");
+  const [remoteStream] = event.streams;
+  video.srcObject = remoteStream;
 };
 
 pc.onicecandidate = event => {
   if (event.candidate) {
-    console.log('❄️ Sending ICE candidate');
-    socket.emit('ice-candidate', event.candidate);
+    socket.emit("ice-candidate", event.candidate);
   }
 };
 
-socket.on('offer', async offer => {
-  console.log('📡 Offer received');
+socket.on("offer", async offer => {
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    console.log('🎥 Access to camera granted (answer)');
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
-  } catch (err) {
-    console.error('🚫 Camera access failed (answer):', err);
-    alert('Please allow camera access.');
-    return;
-  }
-
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  socket.emit('answer', answer);
+  socket.emit("answer", answer);
 });
 
-socket.on('answer', answer => {
-  console.log('📡 Answer received');
+socket.on("answer", answer => {
   pc.setRemoteDescription(new RTCSessionDescription(answer));
 });
 
-socket.on('ice-candidate', candidate => {
-  console.log('❄️ ICE candidate received');
+socket.on("ice-candidate", candidate => {
   pc.addIceCandidate(new RTCIceCandidate(candidate));
 });
 
-// ✅ Only trigger getUserMedia when user clicks start
-startBtn.onclick = async () => {
-  try {
-    console.log("📡 Requesting camera access...");
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    console.log("🎥 Camera access granted (offer)");
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+// 🔁 Start WebRTC offer
+socket.emit("ready");
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log("📡 Sending offer...");
-    socket.emit('offer', offer);
-  } catch (err) {
-    console.error("🚫 Camera access failed (offer):", err);
-    alert('Please allow camera access.');
-  }
-};
 
-// WebXR Immersive rendering — same as before
+// ✅ WebXR immersive rendering
 enterVR.onclick = async () => {
   if (!navigator.xr) {
     alert("❌ WebXR not supported.");
@@ -116,9 +94,9 @@ enterVR.onclick = async () => {
       }
     `;
 
-    function createShader(type, source) {
+    function createShader(type, src) {
       const shader = gl.createShader(type);
-      gl.shaderSource(shader, source);
+      gl.shaderSource(shader, src);
       gl.compileShader(shader);
       return shader;
     }
@@ -152,7 +130,7 @@ enterVR.onclick = async () => {
       try {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
       } catch (e) {
-        console.warn("⚠️ Skipping texImage2D:", e);
+        console.warn("⚠️ Texture update skipped:", e);
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -164,6 +142,6 @@ enterVR.onclick = async () => {
 
     session.requestAnimationFrame(onXRFrame);
   } catch (err) {
-    console.error('🚫 Failed to enter VR mode:', err);
+    console.error('🚫 WebXR session error:', err);
   }
 };
